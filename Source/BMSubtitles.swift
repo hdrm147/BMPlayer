@@ -8,113 +8,190 @@
 
 import Foundation
 
-public class BMSubtitles {
-    public var groups: [Group] = []
+public enum ParseSubtitleError: Error {
+    case Failed
+    case InvalidFormat
+}
+
+public class Subtitles: NSObject {
+    public var titles: [Title]?
     
-    public struct Group: CustomStringConvertible {
-        var index: Int
-        var start: TimeInterval
-        var end  : TimeInterval
-        var text : String
+    public init(srt: String) {
+        super.init()
         
-        init(_ index: Int, _ start: NSString, _ end: NSString, _ text: NSString) {
-            self.index = index
-            self.start = Group.parseDuration(start as String)
-            self.end   = Group.parseDuration(end as String)
-            self.text  = text as String
-        }
-        
-        static func parseDuration(_ fromStr:String) -> TimeInterval {
-            var h: TimeInterval = 0.0, m: TimeInterval = 0.0, s: TimeInterval = 0.0, c: TimeInterval = 0.0
-            let scanner = Scanner(string: fromStr)
-            scanner.scanDouble(&h)
-            scanner.scanString(":", into: nil)
-            scanner.scanDouble(&m)
-            scanner.scanString(":", into: nil)
-            scanner.scanDouble(&s)
-            scanner.scanString(",", into: nil)
-            scanner.scanDouble(&c)
-            return (h * 3600.0) + (m * 60.0) + s + (c / 1000.0)
-        }
-        
-        public var description: String {
-            return "Subtile Group ==========\nindex : \(index),\nstart : \(start)\nend   :\(end)\ntext  :\(text)"
-        }
-    }
-    
-    public init(url: URL, encoding: String.Encoding? = nil) {
-        DispatchQueue.global(qos: .background).async {[weak self] in
+        do {
+            
             do {
-                let string: String
-                if let encoding = encoding {
-                    string = try String(contentsOf: url, encoding: encoding)
-                } else {
-                    string = try String(contentsOf: url)
+                titles = try self.parseSRTSub(srt)
+            }
+            catch {
+                debugPrint(error)
+            }
+        }
+        catch {
+            debugPrint(error)
+        }
+    }
+    
+    func parseSRTSub(_ rawSub: String) throws -> [Title] {
+        var allTitles = [Title]()
+        var components = rawSub.components(separatedBy: "\r\n\r\n")
+        
+        // Fall back to \n\n separation
+        if components.count == 1 {
+            components = rawSub.components(separatedBy: "\n\n")
+        }
+        
+        for component in components {
+            if component.isEmpty {
+                continue
+            }
+            
+            let scanner = Scanner(string: component)
+            
+            var indexResult: Int = -99
+            var startResult: NSString?
+            var endResult: NSString?
+            var textResult: NSString?
+            
+            let indexScanSuccess = scanner.scanInt(&indexResult)
+            let startTimeScanResult = scanner.scanUpToCharacters(from: CharacterSet.whitespaces, into: &startResult)
+            let dividerScanSuccess = scanner.scanUpTo("> ", into: nil)
+            scanner.scanLocation += 2
+            let endTimeScanResult = scanner.scanUpToCharacters(from: CharacterSet.newlines, into: &endResult)
+            scanner.scanLocation += 1
+            
+            var textLines = [String]()
+            
+            // Iterate over text lines
+            while scanner.isAtEnd == false {
+                let textLineScanResult = scanner.scanUpToCharacters(from: CharacterSet.newlines, into: &textResult)
+                
+                guard textLineScanResult else {
+                    throw ParseSubtitleError.InvalidFormat
                 }
-                self?.groups = BMSubtitles.parseSubRip(string) ?? []
-            } catch {
-                print("| BMPlayer | [Error] failed to load \(url.absoluteString) \(error.localizedDescription)")
+                
+                textLines.append(textResult as! String)
             }
+            
+            guard indexScanSuccess && startTimeScanResult && dividerScanSuccess && endTimeScanResult else {
+                throw ParseSubtitleError.InvalidFormat
+            }
+            
+            let startTimeInterval: TimeInterval = timeIntervalFromString(startResult! as String)
+            let endTimeInterval: TimeInterval = timeIntervalFromString(endResult! as String)
+            
+            let title = Title(withTexts: textLines, start: startTimeInterval, end: endTimeInterval, index: indexResult)
+            allTitles.append(title)
         }
+        
+        return allTitles
     }
     
-    /**
-     Search for target group for time
-     
-     - parameter time: target time
-     
-     - returns: result group or nil
-     */
-    public func search(for time: TimeInterval) -> Group? {
-        let result = groups.first(where: { group -> Bool in
-            if group.start <= time && group.end >= time {
-                return true
-            }
-            return false
-        })
-        return result
+    // TODO: Throw
+    func timeIntervalFromString(_ timeString: String) -> TimeInterval {
+        let scanner = Scanner(string: timeString)
+        
+        var hoursResult: Int = 0
+        var minutesResult: Int = 0
+        var secondsResult: NSString?
+        var millisecondsResult: NSString?
+        
+        // Extract time components from string
+        scanner.scanInt(&hoursResult)
+        scanner.scanLocation += 1
+        scanner.scanInt(&minutesResult)
+        scanner.scanLocation += 1
+        scanner.scanUpTo(",", into: &secondsResult)
+        scanner.scanLocation += 1
+        scanner.scanUpToCharacters(from: CharacterSet.newlines, into: &millisecondsResult)
+        
+        let secondsString = secondsResult! as String
+        let seconds = Int(secondsString)
+        
+        let millisecondsString = millisecondsResult! as String
+        let milliseconds = Int(millisecondsString)
+        
+        let timeInterval: Double = Double(hoursResult) * 3600 + Double(minutesResult) * 60 + Double(seconds!) + Double(Double(milliseconds!)/1000)
+        
+        return timeInterval as TimeInterval
+    }
+    public func search(for time: TimeInterval) -> Title? {
+        let result = titles?.first(where: { group -> Bool in
+              if group.start <= time && group.end >= time {
+                  return true
+              }
+              return false
+          })
+          return result
+      }
+}
+
+public class Title: NSObject {
+    public var texts: [String]
+    public var start: TimeInterval
+    public var end: TimeInterval
+    public var index: Int?
+    
+    
+    public init(withTexts: [String], start: TimeInterval, end: TimeInterval, index: Int) {
+//        super.init()
+        
+        self.texts = withTexts
+        self.start = start
+        self.end = end
+        self.index = index
+    }
+}
+
+class OpenSubtitlesHash: NSObject {
+    static let chunkSize: Int = 65536
+    
+    struct VideoHash {
+        var fileHash: String
+        var fileSize: UInt64
     }
     
-    /**
-     Parse str string into Group Array
-     
-     - parameter payload: target string
-     
-     - returns: result group
-     */
-    fileprivate static func parseSubRip(_ payload: String) -> [Group]? {
-        var groups: [Group] = []
-        let scanner = Scanner(string: payload)
-        while !scanner.isAtEnd {
-            var indexString: NSString?
-            scanner.scanUpToCharacters(from: .newlines, into: &indexString)
-            
-            var startString: NSString?
-            scanner.scanUpTo(" --> ", into: &startString)
-            
-            // skip spaces and newlines by default.
-            scanner.scanString("-->", into: nil)
-            
-            var endString: NSString?
-            scanner.scanUpToCharacters(from: .newlines, into: &endString)
-            
-            var textString: NSString?
-            scanner.scanUpTo("\r\n\r\n", into: &textString)
-            
-            if let text = textString {
-                textString = text.trimmingCharacters(in: .whitespaces) as NSString
-                textString = text.replacingOccurrences(of: "\r", with: "") as NSString
-            }
-            
-            if let indexString = indexString,
-                let index = Int(indexString as String),
-                let start = startString,
-                let end   = endString,
-                let text  = textString {
-                let group = Group(index, start, end, text)
-                groups.append(group)
-            }
+    public class func hashFor(_ url: URL) -> VideoHash {
+        return self.hashFor(url.path)
+    }
+    
+    public class func hashFor(_ path: String) -> VideoHash {
+        var fileHash = VideoHash(fileHash: "", fileSize: 0)
+        let fileHandler = FileHandle(forReadingAtPath: path)!
+        
+        let fileDataBegin: NSData = fileHandler.readData(ofLength: chunkSize) as NSData
+        fileHandler.seekToEndOfFile()
+        
+        let fileSize: UInt64 = fileHandler.offsetInFile
+        if (UInt64(chunkSize) > fileSize) {
+            return fileHash
         }
-        return groups
+        
+        fileHandler.seek(toFileOffset: max(0, fileSize - UInt64(chunkSize)))
+        let fileDataEnd: NSData = fileHandler.readData(ofLength: chunkSize) as NSData
+        
+        var hash: UInt64 = fileSize
+        
+        var data_bytes = UnsafeBufferPointer<UInt64>(
+            start: UnsafePointer(fileDataBegin.bytes.assumingMemoryBound(to: UInt64.self)),
+            count: fileDataBegin.length/MemoryLayout<UInt64>.size
+        )
+        
+        hash = data_bytes.reduce(hash,&+)
+        
+        data_bytes = UnsafeBufferPointer<UInt64>(
+            start: UnsafePointer(fileDataEnd.bytes.assumingMemoryBound(to: UInt64.self)),
+            count: fileDataEnd.length/MemoryLayout<UInt64>.size
+        )
+        
+        hash = data_bytes.reduce(hash,&+)
+        
+        fileHash.fileHash = String(format:"%016qx", arguments: [hash])
+        fileHash.fileSize = fileSize
+        
+        fileHandler.closeFile()
+        
+        return fileHash
     }
 }
