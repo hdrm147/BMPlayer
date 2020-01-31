@@ -13,7 +13,7 @@ public enum ParseSubtitleError: Error {
     case InvalidFormat
 }
 
-public class Subtitles: NSObject {
+public class BMSubtitles: NSObject {
     public var titles: [Title]?
     
     public init(srt: String) {
