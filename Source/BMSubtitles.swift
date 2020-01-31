@@ -16,13 +16,14 @@ public enum ParseSubtitleError: Error {
 public class BMSubtitles: NSObject {
     public var titles: [Title]?
     
-    public init(srt: String) {
+    public init(url: URL) {
         super.init()
         
         do {
             
             do {
-                titles = try self.parseSRTSub(srt)
+                let fileContent = try String(contentsOf: url, encoding: String.Encoding.utf8)
+                titles = try self.parseSRTSub(fileContent)
             }
             catch {
                 debugPrint(error)
@@ -132,7 +133,9 @@ public class Title: NSObject {
     public var start: TimeInterval
     public var end: TimeInterval
     public var index: Int?
-    
+    public var text:String {
+        return texts.joined(separator: "\n")
+    }
     
     public init(withTexts: [String], start: TimeInterval, end: TimeInterval, index: Int) {
 //        super.init()
