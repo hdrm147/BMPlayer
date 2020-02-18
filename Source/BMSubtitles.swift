@@ -58,10 +58,14 @@ public class BMSubtitles: NSObject {
             let indexScanSuccess = scanner.scanInt(&indexResult)
             let startTimeScanResult = scanner.scanUpToCharacters(from: CharacterSet.whitespaces, into: &startResult)
             let dividerScanSuccess = scanner.scanUpTo("> ", into: nil)
+            if (scanner.scanLocation + 2 <= scanner.string.count) {
             scanner.scanLocation += 2
+            }
             let endTimeScanResult = scanner.scanUpToCharacters(from: CharacterSet.newlines, into: &endResult)
+            if (scanner.scanLocation + 1 <= scanner.string.count) {
+
             scanner.scanLocation += 1
-            
+            }
             var textLines = [String]()
             
             // Iterate over text lines
